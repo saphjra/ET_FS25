@@ -50,7 +50,7 @@ def ivt(gaze_data: pl.DataFrame, threshold: float, sampling_freq: int):
                 distance = ((last_point['x_right'] - current_point['x_right']) ** 2 + (
                             last_point['y_right'] - current_point['y_right']) ** 2) ** 0.5
             except TypeError:
-                distance = 0  # pixels
+                distance = 100000  # pixels
             velocity = distance / (sampling_freq / 1000) # sampling frequency is in Hz, so we divide by 1000 to get ms
             #print(distance, velocity)
             if velocity < threshold:  # velocity is in pixels/ms
@@ -69,6 +69,13 @@ def ivt(gaze_data: pl.DataFrame, threshold: float, sampling_freq: int):
     for row in gaze_data.rows(named=True):
         if last_point is None:
             last_point = row
+
+            fixations[current_fixation] = {'fix_start': last_point['time'],
+                                           'x_right': last_point['x_right'],
+                                           'y_right': last_point['y_right'],
+                                           'pointId': last_point['pointId'],
+                                           'fix_end': last_point['time']}
+            current_fixation += 1
             continue
         else:
             current_point = row
@@ -93,6 +100,8 @@ def ivt(gaze_data: pl.DataFrame, threshold: float, sampling_freq: int):
     #for point in points:
 
     #print(fixations)
+    last_point = len(fixations)-1
+    del fixations[last_point]
     return fixations
 
 
@@ -119,6 +128,7 @@ def idt(gaze_data: pl.DataFrame, dispersion_threshold: float, duration_threshold
     current_window = {"time": [], 'x_right':[], 'y_right':[]}
     current_fixation = 0
     fixations = {}
+    print(gaze_data['label'])
     for row in gaze_data.rows(named=True):
         #window = gaze_data.filter(pl.col['time'] <= row['time'] + duration_threshold )
 
