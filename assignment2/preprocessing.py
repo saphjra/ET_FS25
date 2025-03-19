@@ -74,7 +74,7 @@ def ivt(gaze_data: pl.DataFrame, threshold: float, sampling_freq: int):
             current_point = row
 
         if last_point['label'] == "saccade" and current_point['label'] == "fixation":
-            fixations[current_fixation] ={'fix_start' : current_point['time'],
+            fixations[current_fixation] ={'fix_start': current_point['time'],
                                           'x_right': current_point['x_right'],
                                           'y_right': current_point['y_right'],
                                           'pointId': current_point['pointId'],
@@ -137,16 +137,17 @@ def idt(gaze_data: pl.DataFrame, dispersion_threshold: float, duration_threshold
         elif disperison >= dispersion_threshold:
             current_window = {"time": [], 'x_right':[], 'y_right':[]}
 
-
+        elif duration < duration_threshold:
+            continue
 
     print(fixations)
     return(fixations)
 
 
 
-def plot_fixations(gaze_data: pl.DataFrame, trial_id: int, mode: str, sample_freq: int, fixations):
+def plot_fixations(gaze_data: pl.DataFrame, trial_id: int, mode: str, sample_freq: int, fixations, threshold=None):
     """ Plot the gaze data and the detected fixations."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3))
+    fig, ax1 = plt.subplots(figsize=(10, 5))
 
 
     position_x = gaze_data['x_right']
@@ -164,9 +165,11 @@ def plot_fixations(gaze_data: pl.DataFrame, trial_id: int, mode: str, sample_fre
     ax1.plot(time, position_y, color='orange', alpha=0.5, label='vertical movement')
 
     ax1.set(xlabel='time', ylabel='coordinate position')
+    plt.figlegend()
     ax1.set(title=f"{mode} for trial {trial_id} with {sample_freq} Hz sampling frequency")
 
     plt.show()
+    plt.savefig(f"{mode}_trial_{trial_id}_sampling_{sample_freq}_{threshold}_100.png")
 
 
 
@@ -192,9 +195,11 @@ def main():
     gaze_data = read_file(args.infile, args.trial)
     if args.mode == 'velocity':
         fixations = ivt(gaze_data, args.vel_thres, args.freq)
+        threshold = args.vel_thres
     elif args.mode == 'dispersion':
         fixations = idt(gaze_data, args.dis_thres, args.dur_thres)
-    plot_fixations(gaze_data, args.trial, args.mode, args.freq, fixations=fixations)
+        threshold = args.dis_thres
+    plot_fixations(gaze_data, args.trial, args.mode, args.freq, fixations=fixations, threshold=threshold)
 
 
 if __name__ == '__main__':
