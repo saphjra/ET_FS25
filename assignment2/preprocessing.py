@@ -9,6 +9,7 @@ from argparse import ArgumentParser, FileType
 from typing import TextIO
 import polars as pl
 import matplotlib.pyplot as plt
+#import defaultdict
 
 
 def read_file(infile: TextIO, trial_id: int):
@@ -38,7 +39,7 @@ def ivt(gaze_data: pl.DataFrame, threshold: float, sampling_freq: int):
     last_point = None
     label = []
     gaze_data = gaze_data.with_columns(label=pl.col("x_left") > 0)
-
+#    fixations = defaultdict()
     for row in gaze_data.rows(named=True):
         if last_point is None:
             last_point = row
@@ -46,23 +47,53 @@ def ivt(gaze_data: pl.DataFrame, threshold: float, sampling_freq: int):
         else:
             current_point = row
             try:
-                distance = ((current_point['x_right'] - last_point['x_right']) ** 2 + (
-                            current_point['y_right'] - last_point['y_right']) ** 2) ** 0.5
+                distance = ((last_point['x_right'] - current_point['x_right']) ** 2 + (
+                            last_point['y_right'] - current_point['y_right']) ** 2) ** 0.5
             except TypeError:
                 distance = 0  # pixels
             velocity = distance / (sampling_freq / 1000) # sampling frequency is in Hz, so we divide by 1000 to get ms
-            print(distance, velocity)
+            #print(distance, velocity)
             if velocity < threshold:  # velocity is in pixels/ms
                 label.append("fixation")
             else:
                 label.append("saccade")
             last_point = current_point
+
     label[0] = label[1]  # first point is changed to whatever second point was (or maybe we should remove it?)
     label.append(label[-1])  # last point is changed to whatever second last point was
     label = {"label": label}
     gaze_data = gaze_data.update(pl.DataFrame(label))
-    print(gaze_data)
-    return gaze_data
+    last_point = None
+    fixations = {}
+    current_fixation = 0
+    for row in gaze_data.rows(named=True):
+        if last_point is None:
+            last_point = row
+            continue
+        else:
+            current_point = row
+
+        if last_point['label'] == "saccade" and current_point['label'] == "fixation":
+            fixations[current_fixation] ={'fix_start' : current_point['time'],
+                                          'x_right': current_point['x_right'],
+                                          'y_right': current_point['y_right'],
+                                          'pointId': current_point['pointId'],
+                                          'fix_end': None}
+            current_fixation += 1
+        if last_point['label'] == "fixation" and current_point['label'] == "saccade":
+            fixations[current_fixation-1]['fix_end'] = current_point['time']
+
+        last_point = current_point
+    print(fixations)
+    #df = gaze_data
+    #fixations = df.filter(
+    #    (df["label"] == "fixation") & (df["label"].shift(-1) == "saccade") or (df["label"] == "saccade") & (df["label"].shift(1) == "fixation")
+    #)
+    #points = df["pointId"].to_list()
+    #for point in points:
+
+    #print(fixations)
+    return fixations
 
 
 def idt(gaze_data: pl.DataFrame, dispersion_threshold: float, duration_threshold: int):
@@ -76,63 +107,67 @@ def idt(gaze_data: pl.DataFrame, dispersion_threshold: float, duration_threshold
      else
         Remove first point
      return fixations}"""
-    pass
+    def _comp_disp(current_window):
+        try:
+            duration = (max(current_window['time']) - min(current_window['time']))
+            dispersion = 0.5 *(max(current_window['x_right'])-min(current_window['x_right'])) + (max(current_window['y_right'])-min(current_window['y_right']))
+        except TypeError:
+            duration = duration_threshold + 1
+            dispersion = dispersion_threshold + 1
+        return dispersion, duration
+
+    current_window = {"time": [], 'x_right':[], 'y_right':[]}
+    current_fixation = 0
+    fixations = {}
+    for row in gaze_data.rows(named=True):
+        #window = gaze_data.filter(pl.col['time'] <= row['time'] + duration_threshold )
+
+        current_window['time'].append(row['time'])
+        current_window['x_right'].append(row['x_right'])
+        current_window['y_right'].append(row['y_right'])
+
+        disperison, duration =_comp_disp(current_window)
+
+        if duration >= duration_threshold and disperison <= dispersion_threshold:
+            fixations[min(current_window['time'])] = {'fix_start': min(current_window['time']),
+                                           'x_right': row['x_right'],
+                                           'y_right': row['y_right'],
+                                           'pointId': row['pointId'],
+                                           'fix_end': max(current_window['time'])}
+        elif disperison >= dispersion_threshold:
+            current_window = {"time": [], 'x_right':[], 'y_right':[]}
 
 
-def plot_fixations(gaze_data: pl.DataFrame, trial_id: int, mode: str, sample_freq: int):
+
+    print(fixations)
+    return(fixations)
+
+
+
+def plot_fixations(gaze_data: pl.DataFrame, trial_id: int, mode: str, sample_freq: int, fixations):
     """ Plot the gaze data and the detected fixations."""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(7, 3))
 
+
     position_x = gaze_data['x_right']
     position_y = gaze_data['y_right']
-    ax1.plot(position_x, color='blue', alpha=0.5, label='horizontal movement')
-    ax1.plot(position_y, color='orange', alpha=0.5, label='vertical movement')
+    time = gaze_data['time']
     # Detect start of a fixation: previous was "saccade", current is "fixation"
 
-    df = gaze_data.with_row_index()
 
-    # Detect start of a fixation
-    fixation_start = df.filter(
-        (df["label"] == "saccade") & (df["label"].shift(1) == "fixation")
-    ).select(pl.col("index").alias("start"))
-
-    # Detect end of a fixation
-    fixation_end = df.filter(
-        (df["label"] == "fixation") & (df["label"].shift(1) == "saccade")
-    ).select(pl.col("index").alias("end"))
-
-    # Combine start and end timestamps
-    fixations = pl.concat([fixation_start, fixation_end], how="horizontal")[:-1]
-    print(fixations)
-    # Combine start and end timestamps
-    #fixations = pl.concat([fixation_start, fixation_end])
-    for start, end in zip(fixations["start"], fixations["end"]):
+    for fixation in fixations.items():
+        print(fixation)
         #pass
-        ax1.axvspan(start, end, color='grey', alpha=0.1)
+        ax1.axvspan(fixation[1]['fix_start'], fixation[1]['fix_end'], color='grey', alpha=0.1)
     #ax1.axvspan(fixations["start"], fixations["end"], alpha=0.1, color='0.9')
-    ax1.plot(position_x, color='blue', alpha=0.5, label='horizontal movement')
-    ax1.plot(position_y, color='orange', alpha=0.5, label='vertical movement')
+    ax1.plot(time, position_x,   color='blue', alpha=0.5, label='horizontal movement')
+    ax1.plot(time, position_y, color='orange', alpha=0.5, label='vertical movement')
 
-    ax1.set(xlim=(0 , len(gaze_data)),xlabel='sample num', ylabel='position')
+    ax1.set(xlabel='time', ylabel='coordinate position')
     ax1.set(title=f"{mode} for trial {trial_id} with {sample_freq} Hz sampling frequency")
-    plt.show()
-    """
-    ax1.axhspan(-1, 1, alpha=0.1)
-    ax1.set(ylim=(-1.5, 1.5), title="fixation")
-
-    mu = 8
-    sigma = 2
-    x = np.linspace(0, 16, 401)
-    y = np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
-    ax2.axvspan(mu - 2 * sigma, mu - sigma, color='0.95')
-    ax2.axvspan(mu - sigma, mu + sigma, color='0.9')
-    ax2.axvspan(mu + sigma, mu + 2 * sigma, color='0.95')
-    ax2.axvline(mu, color='darkgrey', linestyle='--')
-    ax2.plot(x, y)
-    ax2.set(title="axvspan")
 
     plt.show()
-    """
+
 
 
 def get_parser() -> ArgumentParser:
@@ -156,10 +191,10 @@ def main():
     args = parser.parse_args()
     gaze_data = read_file(args.infile, args.trial)
     if args.mode == 'velocity':
-        gaze_data = ivt(gaze_data, args.vel_thres, args.freq)
+        fixations = ivt(gaze_data, args.vel_thres, args.freq)
     elif args.mode == 'dispersion':
-        gaze_data = idt(gaze_data, args.dis_thres, args.dur_thres)
-    plot_fixations(gaze_data, args.trial, args.mode, args.freq)
+        fixations = idt(gaze_data, args.dis_thres, args.dur_thres)
+    plot_fixations(gaze_data, args.trial, args.mode, args.freq, fixations=fixations)
 
 
 if __name__ == '__main__':
